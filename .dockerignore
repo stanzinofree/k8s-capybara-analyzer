@@ -1,0 +1,31 @@
+# Ignore build artifacts
+target/
+export/
+
+# Ignore git
+.git/
+.gitignore
+
+# Ignore documentation
+README.md
+docs/
+
+# Ignore IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Ignore OS files
+.DS_Store
+Thumbs.db
+
+# Ignore temporary files
+*.tmp
+*.temp
+*.log
+
+# Keep only essential files for build
+!src/
+!Cargo.toml
+!Cargo.lock

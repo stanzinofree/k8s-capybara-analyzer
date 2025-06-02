@@ -1,0 +1,100 @@
+# Simplified Dockerfile for cross-compilation without external tools
+FROM --platform=$BUILDPLATFORM rust:1.82-slim AS builder
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc-mingw-w64-x86-64 \
+    gcc-aarch64-linux-gnu \
+    libc6-dev-arm64-cross \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust targets
+RUN rustup target add \
+    x86_64-unknown-linux-gnu \
+    aarch64-unknown-linux-gnu \
+    x86_64-pc-windows-gnu \
+    x86_64-apple-darwin \
+    aarch64-apple-darwin
+
+# Set working directory
+WORKDIR /app
+
+# Copy source files
+COPY Cargo.toml Cargo.lock ./
+COPY src/ ./src/
+
+# Create export directory
+RUN mkdir -p /export
+
+# Configure cross-compilation linkers
+ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
+ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+ENV CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc
+ENV CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
+
+# Build script for all targets
+RUN set -e; \
+    \
+    echo "=== Building for x86_64-unknown-linux-gnu ==="; \
+    cargo build --release --target x86_64-unknown-linux-gnu; \
+    mkdir -p /export/linux/amd64; \
+    cp target/x86_64-unknown-linux-gnu/release/k8s-analyzer /export/linux/amd64/; \
+    echo "✅ Linux AMD64 build complete"; \
+    \
+    echo "=== Building for aarch64-unknown-linux-gnu ==="; \
+    cargo build --release --target aarch64-unknown-linux-gnu; \
+    mkdir -p /export/linux/arm64; \
+    cp target/aarch64-unknown-linux-gnu/release/k8s-analyzer /export/linux/arm64/; \
+    echo "✅ Linux ARM64 build complete"; \
+    \
+    echo "=== Building for x86_64-pc-windows-gnu ==="; \
+    cargo build --release --target x86_64-pc-windows-gnu; \
+    mkdir -p /export/windows/amd64; \
+    cp target/x86_64-pc-windows-gnu/release/k8s-analyzer.exe /export/windows/amd64/; \
+    echo "✅ Windows AMD64 build complete"; \
+    \
+    echo "=== Building for x86_64-apple-darwin ==="; \
+    if cargo build --release --target x86_64-apple-darwin 2>/dev/null; then \
+        mkdir -p /export/darwin/amd64; \
+        cp target/x86_64-apple-darwin/release/k8s-analyzer /export/darwin/amd64/; \
+        echo "✅ macOS AMD64 build complete"; \
+    else \
+        echo "⚠️  macOS AMD64 build failed (expected in cross-compilation)"; \
+    fi; \
+    \
+    echo "=== Building for aarch64-apple-darwin ==="; \
+    if cargo build --release --target aarch64-apple-darwin 2>/dev/null; then \
+        mkdir -p /export/darwin/arm64; \
+        cp target/aarch64-apple-darwin/release/k8s-analyzer /export/darwin/arm64/; \
+        echo "✅ macOS ARM64 build complete"; \
+    else \
+        echo "⚠️  macOS ARM64 build failed (expected in cross-compilation)"; \
+    fi; \
+    \
+    echo "=== Build Summary ==="; \
+    find /export -name "k8s-analyzer*" -type f -exec echo "📦 {}" \; -exec ls -lh {} \;
+
+# Final stage - just the binaries
+FROM scratch AS export
+COPY --from=builder /export /export
+
+# Development stage
+FROM rust:1.82-slim AS dev
+RUN apt-get update && apt-get install -y \
+    gcc-mingw-w64-x86-64 \
+    gcc-aarch64-linux-gnu \
+    libc6-dev-arm64-cross \
+    pkg-config \
+    make \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN rustup target add \
+    x86_64-unknown-linux-gnu \
+    aarch64-unknown-linux-gnu \
+    x86_64-pc-windows-gnu \
+    x86_64-apple-darwin \
+    aarch64-apple-darwin
+
+WORKDIR /app
+CMD ["bash"]

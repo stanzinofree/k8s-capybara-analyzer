@@ -1,0 +1,55 @@
+# Dockerfile that builds only known-working targets
+FROM --platform=$BUILDPLATFORM rust:1.82-slim AS builder
+
+# Install only essential cross-compilation tools
+RUN apt-get update && apt-get install -y \
+    gcc-mingw-w64-x86-64 \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install only the targets that work reliably
+RUN rustup target add \
+    x86_64-pc-windows-gnu
+
+WORKDIR /app
+
+# Copy source files
+COPY Cargo.toml Cargo.lock ./
+COPY src/ ./src/
+
+# Configure Windows cross-compilation
+ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
+ENV CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc
+
+# Build strategy: build host target + Windows target (most useful for distribution)
+RUN set -e; \
+    \
+    echo "=== Building for host platform ==="; \
+    cargo build --release; \
+    HOST_ARCH=$(uname -m); \
+    if [ "$HOST_ARCH" = "x86_64" ]; then \
+        mkdir -p /export/linux/amd64; \
+        cp target/release/k8s-analyzer /export/linux/amd64/; \
+        echo "✅ Linux AMD64 (host) build complete"; \
+    elif [ "$HOST_ARCH" = "aarch64" ]; then \
+        mkdir -p /export/linux/arm64; \
+        cp target/release/k8s-analyzer /export/linux/arm64/; \
+        echo "✅ Linux ARM64 (host) build complete"; \
+    fi; \
+    \
+    echo "=== Building for Windows x86_64 ==="; \
+    if cargo build --release --target x86_64-pc-windows-gnu; then \
+        mkdir -p /export/windows/amd64; \
+        cp target/x86_64-pc-windows-gnu/release/k8s-analyzer.exe /export/windows/amd64/; \
+        echo "✅ Windows AMD64 build complete"; \
+    else \
+        echo "⚠️  Windows build failed"; \
+    fi; \
+    \
+    echo "=== Build Summary ==="; \
+    find /export -name "k8s-analyzer*" -type f -exec echo "📦 Built: {}" \; -exec ls -lh {} \;
+
+# Export stage
+FROM busybox:1.36 AS export
+COPY --from=builder /export /export
+CMD ["sh"]
